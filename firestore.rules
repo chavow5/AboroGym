@@ -1,0 +1,308 @@
+rules_version = '2';
+
+// ===============================================================
+// Assumed Data Model — AboroGym Multi-Tenant (3 Gyms + Super Admin)
+// ===============================================================
+//
+// This security rules file assumes the following multi-tenant structures:
+//
+// 1. Collection: /tenants/{tenantId}
+//    Document ID: 'gym-1' | 'gym-2' | 'gym-3'
+//    Fields:
+//      - tenantId: string (required, == tenantId, immutable) - ID of the gym tenant
+//      - nombre: string (required, size 2..100) - Display name of the gym
+//      - sede: string (required, size 2..120) - Location / branch description
+//      - planSaaS: string (required, in ['Starter', 'Pro', 'Enterprise']) - SaaS tier
+//      - adminUid: string (required, size 1..128, immutable) - UID of Super Admin owner
+//      - clientEmail: string (required, valid email, size <= 120) - Assigned client email
+//      - clientNombre: string (required, size 2..100) - Assigned client manager name
+//      - tarifa2Dias: number (required, 0..10000000) - Fee for 2 days/week
+//      - tarifa3Dias: number (required, 0..10000000) - Fee for 3 days/week
+//      - tarifa5Dias: number (required, 0..10000000) - Fee for 5 days/week
+//      - porcentajeProfesor: number (required, 0..100) - Coach revenue share %
+//      - porcentajeGym: number (required, 0..100) - Gym net revenue share %
+//      - cupoMaximoDefault: number (required, 1..500) - Max capacity per time slot
+//      - updatedAt: string (required, size 10..40) - ISO timestamp
+//
+// 2. Collection: /tenants/{tenantId}/alumnos/{alumnoId}
+//    Fields:
+//      - tenantId: string (required, == tenantId, immutable)
+//      - nombreCompleto: string (required, size 2..100)
+//      - telefono: string (required, size 3..40)
+//      - edad: number (required, 5..120)
+//      - diasPorSemana: number (required, in [2, 3, 5])
+//      - planEntrenamiento: string (required, enum)
+//      - lunes: string (required, size 0..20)
+//      - martes: string (required, size 0..20)
+//      - miercoles: string (required, size 0..20)
+//      - jueves: string (required, size 0..20)
+//      - viernes: string (required, size 0..20)
+//      - correo: string (required, valid email, size <= 120)
+//      - fechaInscripcion: string (required, size 8..30)
+//      - activo: bool (required)
+//      - createdAt: string (required, size 10..40, immutable)
+//
+// 3. Collection: /tenants/{tenantId}/cobranzas/{cobranzaId}
+//    Fields:
+//      - tenantId: string (required, == tenantId, immutable)
+//      - mes: string (required, in ['Octubre', 'Noviembre', 'Diciembre'])
+//      - alumnoId: string (required, size 1..100)
+//      - alumnoNombre: string (required, size 2..100)
+//      - dias: number (required, in [2, 3, 5])
+//      - precioCuota: number (required, 0..10000000)
+//      - actividad: string (required, size 2..60)
+//      - metodoPago: string (required, in ['Efectivo', 'Transferencia'])
+//      - descuentoInscripcion: number (required, -10000000..10000000)
+//      - totalPagado: number (required, 0..20000000)
+//      - observaciones: string (required, size 0..300)
+//      - fechaPago: string (required, size 8..30)
+//      - createdAt: string (required, size 10..40, immutable)
+//
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Bootstrapped Super Admin check (verified email)
+    function isSuperAdmin() {
+      return isAuthenticated() &&
+        request.auth.token.email == 'davidrmrz10@gmail.com' &&
+        request.auth.token.email_verified == true;
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function areImmutableFieldsUnchanged(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
+    function isValidEmail(email) {
+      return email is string &&
+        email.size() >= 5 &&
+        email.size() <= 120 &&
+        email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    // Check if the authenticated user is the Admin of this tenant document
+    function isTenantAdminDoc(tenantData) {
+      return isSuperAdmin() || (isAuthenticated() && tenantData.adminUid == request.auth.uid);
+    }
+
+    // Check if the authenticated user is the assigned Client of this tenant document
+    function isTenantClientDoc(tenantData) {
+      return isAuthenticated() &&
+        request.auth.token.email != null &&
+        tenantData.clientEmail == request.auth.token.email;
+    }
+
+    // Check if user can access subcollections of /tenants/{tenantId}
+    function canAccessTenant(tenantId) {
+      let tenantPath = /databases/$(database)/documents/tenants/$(tenantId);
+      return isSuperAdmin() || (
+        isAuthenticated() &&
+        exists(tenantPath) &&
+        (
+          get(tenantPath).data.adminUid == request.auth.uid ||
+          (
+            request.auth.token.email != null &&
+            get(tenantPath).data.clientEmail == request.auth.token.email
+          )
+        )
+      );
+    }
+
+    // ===============================================================
+    // Domain Validators (Used in BOTH create and update)
+    // ===============================================================
+
+    function isValidTenant(data, tenantId) {
+      let allowedFields = [
+        'tenantId',
+        'nombre',
+        'sede',
+        'planSaaS',
+        'adminUid',
+        'clientEmail',
+        'clientNombre',
+        'tarifa2Dias',
+        'tarifa3Dias',
+        'tarifa5Dias',
+        'porcentajeProfesor',
+        'porcentajeGym',
+        'cupoMaximoDefault',
+        'updatedAt'
+      ];
+      return hasRequiredFields(allowedFields) &&
+        hasOnlyAllowedFields(allowedFields) &&
+        data.tenantId is string && data.tenantId == tenantId && data.tenantId.size() <= 40 &&
+        data.nombre is string && data.nombre.size() >= 2 && data.nombre.size() <= 100 &&
+        data.sede is string && data.sede.size() >= 2 && data.sede.size() <= 120 &&
+        data.planSaaS is string && data.planSaaS in ['Starter', 'Pro', 'Enterprise'] &&
+        data.adminUid is string && data.adminUid.size() >= 1 && data.adminUid.size() <= 128 &&
+        isValidEmail(data.clientEmail) &&
+        data.clientNombre is string && data.clientNombre.size() >= 2 && data.clientNombre.size() <= 100 &&
+        data.tarifa2Dias is number && data.tarifa2Dias >= 0 && data.tarifa2Dias <= 10000000 &&
+        data.tarifa3Dias is number && data.tarifa3Dias >= 0 && data.tarifa3Dias <= 10000000 &&
+        data.tarifa5Dias is number && data.tarifa5Dias >= 0 && data.tarifa5Dias <= 10000000 &&
+        data.porcentajeProfesor is number && data.porcentajeProfesor >= 0 && data.porcentajeProfesor <= 100 &&
+        data.porcentajeGym is number && data.porcentajeGym >= 0 && data.porcentajeGym <= 100 &&
+        data.cupoMaximoDefault is number && data.cupoMaximoDefault >= 1 && data.cupoMaximoDefault <= 500 &&
+        data.updatedAt is string && data.updatedAt.size() >= 10 && data.updatedAt.size() <= 40;
+    }
+
+    function isValidTenantAlumno(data, tenantId) {
+      let allowedFields = [
+        'tenantId',
+        'nombreCompleto',
+        'telefono',
+        'edad',
+        'diasPorSemana',
+        'planEntrenamiento',
+        'lunes',
+        'martes',
+        'miercoles',
+        'jueves',
+        'viernes',
+        'correo',
+        'fechaInscripcion',
+        'activo',
+        'createdAt'
+      ];
+      let validPlanes = [
+        'Funcional',
+        'Musculación',
+        'Cross Training',
+        'Personalizado',
+        'Gap & Cardio',
+        'Rehabilitación'
+      ];
+      return hasRequiredFields(allowedFields) &&
+        hasOnlyAllowedFields(allowedFields) &&
+        data.tenantId is string && data.tenantId == tenantId && data.tenantId.size() <= 40 &&
+        data.nombreCompleto is string && data.nombreCompleto.size() >= 2 && data.nombreCompleto.size() <= 100 &&
+        data.telefono is string && data.telefono.size() >= 3 && data.telefono.size() <= 40 &&
+        data.edad is number && data.edad >= 5 && data.edad <= 120 &&
+        data.diasPorSemana is number && data.diasPorSemana in [2, 3, 5] &&
+        data.planEntrenamiento is string && data.planEntrenamiento in validPlanes &&
+        data.lunes is string && data.lunes.size() <= 20 &&
+        data.martes is string && data.martes.size() <= 20 &&
+        data.miercoles is string && data.miercoles.size() <= 20 &&
+        data.jueves is string && data.jueves.size() <= 20 &&
+        data.viernes is string && data.viernes.size() <= 20 &&
+        isValidEmail(data.correo) &&
+        data.fechaInscripcion is string && data.fechaInscripcion.size() >= 8 && data.fechaInscripcion.size() <= 30 &&
+        data.activo is bool &&
+        data.createdAt is string && data.createdAt.size() >= 10 && data.createdAt.size() <= 40;
+    }
+
+    function isValidTenantCobranza(data, tenantId) {
+      let allowedFields = [
+        'tenantId',
+        'mes',
+        'alumnoId',
+        'alumnoNombre',
+        'dias',
+        'precioCuota',
+        'actividad',
+        'metodoPago',
+        'descuentoInscripcion',
+        'totalPagado',
+        'observaciones',
+        'fechaPago',
+        'createdAt'
+      ];
+      return hasRequiredFields(allowedFields) &&
+        hasOnlyAllowedFields(allowedFields) &&
+        data.tenantId is string && data.tenantId == tenantId && data.tenantId.size() <= 40 &&
+        data.mes is string && data.mes in ['Octubre', 'Noviembre', 'Diciembre'] &&
+        data.alumnoId is string && data.alumnoId.size() >= 1 && data.alumnoId.size() <= 100 &&
+        data.alumnoNombre is string && data.alumnoNombre.size() >= 2 && data.alumnoNombre.size() <= 100 &&
+        data.dias is number && data.dias in [2, 3, 5] &&
+        data.precioCuota is number && data.precioCuota >= 0 && data.precioCuota <= 10000000 &&
+        data.actividad is string && data.actividad.size() >= 2 && data.actividad.size() <= 60 &&
+        data.metodoPago is string && data.metodoPago in ['Efectivo', 'Transferencia'] &&
+        data.descuentoInscripcion is number && data.descuentoInscripcion >= -10000000 && data.descuentoInscripcion <= 10000000 &&
+        data.totalPagado is number && data.totalPagado >= 0 && data.totalPagado <= 20000000 &&
+        data.observaciones is string && data.observaciones.size() <= 300 &&
+        data.fechaPago is string && data.fechaPago.size() >= 8 && data.fechaPago.size() <= 30 &&
+        data.createdAt is string && data.createdAt.size() >= 10 && data.createdAt.size() <= 40;
+    }
+
+    // ===============================================================
+    // Multi-Tenant Rules (/tenants/{tenantId})
+    // ===============================================================
+
+    match /tenants/{tenantId} {
+      // Only the Super Admin or the assigned Client of this gym can read the tenant config
+      allow read: if isTenantAdminDoc(resource.data) || isTenantClientDoc(resource.data);
+
+      // Creating a tenant requires authenticated admin setting their own adminUid
+      allow create: if isAuthenticated() &&
+        isValidTenant(request.resource.data, tenantId) &&
+        request.resource.data.adminUid == request.auth.uid;
+
+      // Updating a tenant:
+      // - Admin can update all valid fields except immutable tenantId and adminUid
+      // - Client can ONLY update operational tariff/capacity fields, never adminUid, clientEmail, clientNombre, or planSaaS
+      allow update: if isValidTenant(request.resource.data, tenantId) &&
+        areImmutableFieldsUnchanged(['tenantId', 'adminUid']) &&
+        (
+          isTenantAdminDoc(resource.data) ||
+          (
+            isTenantClientDoc(resource.data) &&
+            areImmutableFieldsUnchanged(['clientEmail', 'clientNombre', 'planSaaS'])
+          )
+        );
+
+      allow delete: if isTenantAdminDoc(resource.data);
+
+      match /alumnos/{alumnoId} {
+        allow read: if canAccessTenant(tenantId);
+        allow create: if canAccessTenant(tenantId) && isValidTenantAlumno(request.resource.data, tenantId);
+        allow update: if canAccessTenant(tenantId) &&
+          isValidTenantAlumno(request.resource.data, tenantId) &&
+          areImmutableFieldsUnchanged(['tenantId', 'createdAt']);
+        allow delete: if canAccessTenant(tenantId);
+      }
+
+      match /cobranzas/{cobranzaId} {
+        allow read: if canAccessTenant(tenantId);
+        allow create: if canAccessTenant(tenantId) && isValidTenantCobranza(request.resource.data, tenantId);
+        allow update: if canAccessTenant(tenantId) &&
+          isValidTenantCobranza(request.resource.data, tenantId) &&
+          areImmutableFieldsUnchanged(['tenantId', 'createdAt']);
+        allow delete: if canAccessTenant(tenantId);
+      }
+    }
+
+    // ===============================================================
+    // Legacy Single-User Rules (/users/{userId}/...) kept for safety
+    // ===============================================================
+    match /users/{userId}/{document=**} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // Default deny for everything else
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
