@@ -7,6 +7,8 @@
         "supportEmail": "davidrmrz10@gmail.com",
         "authorizedRedirectUris": [
           "https://aborogym-5d109.firebaseapp.com/__/auth/handler",
+          "https://aborogym-ar.web.app/__/auth/handler",
+          "https://aborogym-ar.firebaseapp.com/__/auth/handler",
           "http://localhost"
         ]
       }
@@ -19,6 +21,7 @@
     "location": "nam5"
   },
   "hosting": {
+    "site": "aborogym-ar",
     "public": "dist",
     "ignore": [
       "firebase.json",
