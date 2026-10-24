@@ -1,21 +1,17 @@
 rules_version = '2';
 
 // ===============================================================
-// Assumed Data Model — AboroGym Multi-Tenant (3 Gyms + Super Admin)
+// Assumed Data Model — AboroGym Single-Gym Production
 // ===============================================================
 //
-// This security rules file assumes the following multi-tenant structures:
+// This security rules file assumes the following data structures:
 //
-// 1. Collection: /tenants/{tenantId}
-//    Document ID: 'gym-1' | 'gym-2' | 'gym-3'
+// 1. Collection: /users/{userId}/config/{configId}
+//    Document ID: 'general'
 //    Fields:
-//      - tenantId: string (required, == tenantId, immutable) - ID of the gym tenant
+//      - ownerUid: string (required, == userId, immutable) - Owner UID
 //      - nombre: string (required, size 2..100) - Display name of the gym
 //      - sede: string (required, size 2..120) - Location / branch description
-//      - planSaaS: string (required, in ['Starter', 'Pro', 'Enterprise']) - SaaS tier
-//      - adminUid: string (required, size 1..128, immutable) - UID of Super Admin owner
-//      - clientEmail: string (required, valid email, size <= 120) - Assigned client email
-//      - clientNombre: string (required, size 2..100) - Assigned client manager name
 //      - tarifa2Dias: number (required, 0..10000000) - Fee for 2 days/week
 //      - tarifa3Dias: number (required, 0..10000000) - Fee for 3 days/week
 //      - tarifa5Dias: number (required, 0..10000000) - Fee for 5 days/week
@@ -24,9 +20,9 @@ rules_version = '2';
 //      - cupoMaximoDefault: number (required, 1..500) - Max capacity per time slot
 //      - updatedAt: string (required, size 10..40) - ISO timestamp
 //
-// 2. Collection: /tenants/{tenantId}/alumnos/{alumnoId}
+// 2. Collection: /users/{userId}/alumnos/{alumnoId}
 //    Fields:
-//      - tenantId: string (required, == tenantId, immutable)
+//      - ownerUid: string (required, == userId, immutable)
 //      - nombreCompleto: string (required, size 2..100)
 //      - telefono: string (required, size 3..40)
 //      - edad: number (required, 5..120)
@@ -42,9 +38,9 @@ rules_version = '2';
 //      - activo: bool (required)
 //      - createdAt: string (required, size 10..40, immutable)
 //
-// 3. Collection: /tenants/{tenantId}/cobranzas/{cobranzaId}
+// 3. Collection: /users/{userId}/cobranzas/{cobranzaId}
 //    Fields:
-//      - tenantId: string (required, == tenantId, immutable)
+//      - ownerUid: string (required, == userId, immutable)
 //      - mes: string (required, in ['Octubre', 'Noviembre', 'Diciembre'])
 //      - alumnoId: string (required, size 1..100)
 //      - alumnoNombre: string (required, size 2..100)
@@ -75,11 +71,23 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    // Bootstrapped Super Admin check (verified email)
-    function isSuperAdmin() {
-      return isAuthenticated() &&
+    function isPrimaryOwner(userId) {
+      return isOwner(userId) || (
+        isAuthenticated() &&
         request.auth.token.email == 'davidrmrz10@gmail.com' &&
-        request.auth.token.email_verified == true;
+        request.auth.token.email_verified == true
+      );
+    }
+
+    function isAuthorizedGymUser(userId) {
+      let configPath = /databases/$(database)/documents/users/$(userId)/config/general;
+      return isPrimaryOwner(userId) || (
+        isAuthenticated() &&
+        request.auth.token.email != null &&
+        exists(configPath) &&
+        'emailsAutorizados' in get(configPath).data &&
+        request.auth.token.email in get(configPath).data.emailsAutorizados
+      );
     }
 
     function hasRequiredFields(fields) {
@@ -101,47 +109,15 @@ service cloud.firestore {
         email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
     }
 
-    // Check if the authenticated user is the Admin of this tenant document
-    function isTenantAdminDoc(tenantData) {
-      return isSuperAdmin() || (isAuthenticated() && tenantData.adminUid == request.auth.uid);
-    }
-
-    // Check if the authenticated user is the assigned Client of this tenant document
-    function isTenantClientDoc(tenantData) {
-      return isAuthenticated() &&
-        request.auth.token.email != null &&
-        tenantData.clientEmail == request.auth.token.email;
-    }
-
-    // Check if user can access subcollections of /tenants/{tenantId}
-    function canAccessTenant(tenantId) {
-      let tenantPath = /databases/$(database)/documents/tenants/$(tenantId);
-      return isSuperAdmin() || (
-        isAuthenticated() &&
-        exists(tenantPath) &&
-        (
-          get(tenantPath).data.adminUid == request.auth.uid ||
-          (
-            request.auth.token.email != null &&
-            get(tenantPath).data.clientEmail == request.auth.token.email
-          )
-        )
-      );
-    }
-
     // ===============================================================
     // Domain Validators (Used in BOTH create and update)
     // ===============================================================
 
-    function isValidTenant(data, tenantId) {
-      let allowedFields = [
-        'tenantId',
+    function isValidConfig(data, userId) {
+      let requiredFields = [
+        'ownerUid',
         'nombre',
         'sede',
-        'planSaaS',
-        'adminUid',
-        'clientEmail',
-        'clientNombre',
         'tarifa2Dias',
         'tarifa3Dias',
         'tarifa5Dias',
@@ -150,27 +126,37 @@ service cloud.firestore {
         'cupoMaximoDefault',
         'updatedAt'
       ];
-      return hasRequiredFields(allowedFields) &&
+      let allowedFields = [
+        'ownerUid',
+        'nombre',
+        'sede',
+        'tarifa2Dias',
+        'tarifa3Dias',
+        'tarifa5Dias',
+        'porcentajeProfesor',
+        'porcentajeGym',
+        'cupoMaximoDefault',
+        'emailsAutorizados',
+        'updatedAt'
+      ];
+      return hasRequiredFields(requiredFields) &&
         hasOnlyAllowedFields(allowedFields) &&
-        data.tenantId is string && data.tenantId == tenantId && data.tenantId.size() <= 40 &&
+        data.ownerUid is string && data.ownerUid == userId && data.ownerUid.size() <= 128 &&
         data.nombre is string && data.nombre.size() >= 2 && data.nombre.size() <= 100 &&
         data.sede is string && data.sede.size() >= 2 && data.sede.size() <= 120 &&
-        data.planSaaS is string && data.planSaaS in ['Starter', 'Pro', 'Enterprise'] &&
-        data.adminUid is string && data.adminUid.size() >= 1 && data.adminUid.size() <= 128 &&
-        isValidEmail(data.clientEmail) &&
-        data.clientNombre is string && data.clientNombre.size() >= 2 && data.clientNombre.size() <= 100 &&
         data.tarifa2Dias is number && data.tarifa2Dias >= 0 && data.tarifa2Dias <= 10000000 &&
         data.tarifa3Dias is number && data.tarifa3Dias >= 0 && data.tarifa3Dias <= 10000000 &&
         data.tarifa5Dias is number && data.tarifa5Dias >= 0 && data.tarifa5Dias <= 10000000 &&
         data.porcentajeProfesor is number && data.porcentajeProfesor >= 0 && data.porcentajeProfesor <= 100 &&
         data.porcentajeGym is number && data.porcentajeGym >= 0 && data.porcentajeGym <= 100 &&
         data.cupoMaximoDefault is number && data.cupoMaximoDefault >= 1 && data.cupoMaximoDefault <= 500 &&
+        (!('emailsAutorizados' in data) || (data.emailsAutorizados is list && data.emailsAutorizados.size() <= 30)) &&
         data.updatedAt is string && data.updatedAt.size() >= 10 && data.updatedAt.size() <= 40;
     }
 
-    function isValidTenantAlumno(data, tenantId) {
+    function isValidAlumno(data, userId) {
       let allowedFields = [
-        'tenantId',
+        'ownerUid',
         'nombreCompleto',
         'telefono',
         'edad',
@@ -196,7 +182,7 @@ service cloud.firestore {
       ];
       return hasRequiredFields(allowedFields) &&
         hasOnlyAllowedFields(allowedFields) &&
-        data.tenantId is string && data.tenantId == tenantId && data.tenantId.size() <= 40 &&
+        data.ownerUid is string && data.ownerUid == userId && data.ownerUid.size() <= 128 &&
         data.nombreCompleto is string && data.nombreCompleto.size() >= 2 && data.nombreCompleto.size() <= 100 &&
         data.telefono is string && data.telefono.size() >= 3 && data.telefono.size() <= 40 &&
         data.edad is number && data.edad >= 5 && data.edad <= 120 &&
@@ -213,9 +199,9 @@ service cloud.firestore {
         data.createdAt is string && data.createdAt.size() >= 10 && data.createdAt.size() <= 40;
     }
 
-    function isValidTenantCobranza(data, tenantId) {
+    function isValidCobranza(data, userId) {
       let allowedFields = [
-        'tenantId',
+        'ownerUid',
         'mes',
         'alumnoId',
         'alumnoNombre',
@@ -229,10 +215,24 @@ service cloud.firestore {
         'fechaPago',
         'createdAt'
       ];
+      let validMeses = [
+        'Enero',
+        'Febrero',
+        'Marzo',
+        'Abril',
+        'Mayo',
+        'Junio',
+        'Julio',
+        'Agosto',
+        'Septiembre',
+        'Octubre',
+        'Noviembre',
+        'Diciembre'
+      ];
       return hasRequiredFields(allowedFields) &&
         hasOnlyAllowedFields(allowedFields) &&
-        data.tenantId is string && data.tenantId == tenantId && data.tenantId.size() <= 40 &&
-        data.mes is string && data.mes in ['Octubre', 'Noviembre', 'Diciembre'] &&
+        data.ownerUid is string && data.ownerUid == userId && data.ownerUid.size() <= 128 &&
+        data.mes is string && data.mes in validMeses &&
         data.alumnoId is string && data.alumnoId.size() >= 1 && data.alumnoId.size() <= 100 &&
         data.alumnoNombre is string && data.alumnoNombre.size() >= 2 && data.alumnoNombre.size() <= 100 &&
         data.dias is number && data.dias in [2, 3, 5] &&
@@ -247,60 +247,45 @@ service cloud.firestore {
     }
 
     // ===============================================================
-    // Multi-Tenant Rules (/tenants/{tenantId})
+    // Single-Gym Rules (/users/{userId})
     // ===============================================================
 
-    match /tenants/{tenantId} {
-      // Only the Super Admin or the assigned Client of this gym can read the tenant config
-      allow read: if isTenantAdminDoc(resource.data) || isTenantClientDoc(resource.data);
-
-      // Creating a tenant requires authenticated admin setting their own adminUid
-      allow create: if isAuthenticated() &&
-        isValidTenant(request.resource.data, tenantId) &&
-        request.resource.data.adminUid == request.auth.uid;
-
-      // Updating a tenant:
-      // - Admin can update all valid fields except immutable tenantId and adminUid
-      // - Client can ONLY update operational tariff/capacity fields, never adminUid, clientEmail, clientNombre, or planSaaS
-      allow update: if isValidTenant(request.resource.data, tenantId) &&
-        areImmutableFieldsUnchanged(['tenantId', 'adminUid']) &&
-        (
-          isTenantAdminDoc(resource.data) ||
+    match /users/{userId} {
+      match /config/{configId} {
+        allow read: if isAuthorizedGymUser(userId);
+        allow create: if isPrimaryOwner(userId) && configId == 'general' && isValidConfig(request.resource.data, userId);
+        allow update: if configId == 'general' &&
+          isValidConfig(request.resource.data, userId) &&
+          areImmutableFieldsUnchanged(['ownerUid']) &&
           (
-            isTenantClientDoc(resource.data) &&
-            areImmutableFieldsUnchanged(['clientEmail', 'clientNombre', 'planSaaS'])
-          )
-        );
-
-      allow delete: if isTenantAdminDoc(resource.data);
+            isPrimaryOwner(userId) ||
+            (isAuthorizedGymUser(userId) && areImmutableFieldsUnchanged(['emailsAutorizados']))
+          );
+        allow delete: if isPrimaryOwner(userId);
+      }
 
       match /alumnos/{alumnoId} {
-        allow read: if canAccessTenant(tenantId);
-        allow create: if canAccessTenant(tenantId) && isValidTenantAlumno(request.resource.data, tenantId);
-        allow update: if canAccessTenant(tenantId) &&
-          isValidTenantAlumno(request.resource.data, tenantId) &&
-          areImmutableFieldsUnchanged(['tenantId', 'createdAt']);
-        allow delete: if canAccessTenant(tenantId);
+        allow read: if isAuthorizedGymUser(userId);
+        // Allows gym owner or a student using the gym's unique self-registration link (?inscripcion=userId)
+        // to create a strictly validated student record, without granting any read/update/delete access.
+        allow create: if isValidAlumno(request.resource.data, userId);
+        allow update: if isAuthorizedGymUser(userId) &&
+          isValidAlumno(request.resource.data, userId) &&
+          areImmutableFieldsUnchanged(['ownerUid', 'createdAt']);
+        allow delete: if isAuthorizedGymUser(userId);
       }
 
       match /cobranzas/{cobranzaId} {
-        allow read: if canAccessTenant(tenantId);
-        allow create: if canAccessTenant(tenantId) && isValidTenantCobranza(request.resource.data, tenantId);
-        allow update: if canAccessTenant(tenantId) &&
-          isValidTenantCobranza(request.resource.data, tenantId) &&
-          areImmutableFieldsUnchanged(['tenantId', 'createdAt']);
-        allow delete: if canAccessTenant(tenantId);
+        allow read: if isAuthorizedGymUser(userId);
+        allow create: if isAuthorizedGymUser(userId) && isValidCobranza(request.resource.data, userId);
+        allow update: if isAuthorizedGymUser(userId) &&
+          isValidCobranza(request.resource.data, userId) &&
+          areImmutableFieldsUnchanged(['ownerUid', 'createdAt']);
+        allow delete: if isAuthorizedGymUser(userId);
       }
     }
 
-    // ===============================================================
-    // Legacy Single-User Rules (/users/{userId}/...) kept for safety
-    // ===============================================================
-    match /users/{userId}/{document=**} {
-      allow read, write: if isOwner(userId);
-    }
-
-    // Default deny for everything else
+    // Default deny for everything else (including any legacy /tenants paths)
     match /{document=**} {
       allow read, write: if false;
     }
