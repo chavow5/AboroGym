@@ -54,6 +54,6 @@ export const DEFAULT_GYM_CONFIG = {
   tarifa5Dias: 45000,
   porcentajeProfesor: 67,
   porcentajeGym: 33,
-  cupoMaximoDefault: 12,
+  cupoMaximoDefault: 5,
   emailsAutorizados: ['davidrmrz10@gmail.com']
 };
