@@ -199,6 +199,17 @@ body {
   font-size: 0.76rem;
 }
 
+.btn-icon-only {
+  padding: 0.35rem;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
 .btn-primary {
   background: linear-gradient(135deg, var(--brand-primary), var(--brand-dark));
   color: white;
@@ -380,34 +391,40 @@ body {
 
 @media (max-width: 540px) {
   .app-header {
-    padding: 0.55rem 0.75rem;
+    padding: 0.5rem 0.65rem;
+    gap: 0.4rem;
+  }
+
+  .header-brand {
     gap: 0.45rem;
+    min-width: 0;
+    flex: 1;
   }
 
   .header-icon {
-    width: 34px;
-    height: 34px;
+    width: 32px;
+    height: 32px;
   }
 
   .header-titles h1 {
-    font-size: 0.92rem;
+    font-size: 0.9rem;
+    line-height: 1.2;
   }
 
   .header-titles p {
-    font-size: 0.68rem;
+    font-size: 0.66rem;
+    line-height: 1.2;
+  }
+
+  .header-actions {
+    gap: 0.25rem;
   }
 
   .header-btn {
-    padding: 0.42rem 0.52rem;
+    padding: 0.42rem 0.48rem;
   }
 
-  .header-btn:not(.accent) .header-btn-label {
-    display: none;
-  }
-}
-
-@media (max-width: 360px) {
-  .header-btn.accent .header-btn-label {
+  .header-btn .header-btn-label {
     display: none;
   }
 }
@@ -700,14 +717,15 @@ body {
 }
 
 .fast-charge-info {
-  min-width: 150px;
-  flex: 1;
+  min-width: 0;
+  flex: 1 1 180px;
 }
 
 .fast-charge-name {
   font-size: 0.88rem;
   font-weight: 800;
   color: var(--slate-900);
+  word-break: break-word;
 }
 
 .fast-charge-meta {
@@ -715,14 +733,104 @@ body {
   color: var(--slate-500);
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.4rem;
-  margin-top: 2px;
+  margin-top: 3px;
 }
 
 .fast-charge-actions {
   display: flex;
   align-items: center;
   gap: 0.35rem;
+  flex-shrink: 0;
+}
+
+/* ==================== PAYMENT HISTORY LIST & CARDS ==================== */
+.payment-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.payment-history-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.7rem 0.85rem;
+  border-radius: var(--radius-sm);
+  background: white;
+  border: 1px solid var(--accent-pearl);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  transition: border-color 0.15s ease;
+}
+
+.payment-history-card:hover {
+  border-color: var(--brand-light);
+}
+
+.payment-history-row-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.payment-history-name {
+  font-size: 0.92rem;
+  font-weight: 800;
+  color: var(--slate-900);
+  word-break: break-word;
+  min-width: 0;
+  flex: 1;
+}
+
+.payment-history-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.payment-history-amount {
+  color: #1d4963;
+  font-size: 0.96rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.payment-history-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  font-size: 0.74rem;
+  color: var(--slate-600);
+}
+
+.payment-history-pill {
+  padding: 0.14rem 0.45rem;
+  border-radius: 6px;
+  background: var(--slate-100);
+  color: var(--slate-700);
+  font-weight: 600;
+  font-size: 0.72rem;
+}
+
+.payment-history-date {
+  font-size: 0.72rem;
+  color: var(--slate-500);
+  margin-left: 0.15rem;
+}
+
+.payment-history-obs {
+  font-size: 0.72rem;
+  color: #64748b;
+  background: var(--slate-50);
+  border-left: 2px solid var(--brand-primary);
+  padding: 0.28rem 0.55rem;
+  border-radius: 0 4px 4px 0;
+  word-break: break-word;
+  line-height: 1.35;
 }
 
 /* ==================== MOBILE COLLAPSIBLE ITEM CARDS ==================== */

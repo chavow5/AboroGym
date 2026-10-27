@@ -3045,41 +3045,48 @@ export default function App() {
                       )}
                     </div>
                   ) : (
-                    <div className="fast-charge-list">
+                    <div className="payment-history-list">
                       {filteredPagosMes.map((cob) => (
-                        <div key={cob.id} className="fast-charge-item">
-                          <div className="fast-charge-info">
-                            <div className="fast-charge-name">{cob.alumnoNombre}</div>
-                            <div className="fast-charge-meta">
-                              <span
-                                className={`badge ${
-                                  cob.metodoPago === 'Efectivo' ? 'badge-emerald' : 'badge-blue'
-                                }`}
+                        <div key={cob.id} className="payment-history-card">
+                          <div className="payment-history-row-top">
+                            <span className="payment-history-name">{cob.alumnoNombre}</span>
+                            <div className="payment-history-actions">
+                              <strong className="payment-history-amount mono">
+                                {formatCurrency(cob.totalPagado)}
+                              </strong>
+                              <button
+                                type="button"
+                                className="btn btn-danger-soft btn-sm btn-icon-only"
+                                onClick={() => handleDeleteCobranza(cob)}
+                                title="Eliminar pago"
                               >
-                                {cob.metodoPago === 'Efectivo' ? '💵 Efectivo' : '🏦 Transferencia'}
-                              </span>
-                              <span>{cob.actividad}</span>
-                              <span className="mono">{cob.fechaPago}</span>
-                              {cob.observaciones && (
-                                <span style={{ fontSize: '0.68rem', color: '#64748b', display: 'block', marginTop: '2px' }}>
-                                  {cob.observaciones}
-                                </span>
-                              )}
+                                <Trash2 size={13} />
+                              </button>
                             </div>
                           </div>
-                          <div className="fast-charge-actions">
-                            <strong className="mono" style={{ color: '#1d4963', fontSize: '0.9rem' }}>
-                              {formatCurrency(cob.totalPagado)}
-                            </strong>
-                            <button
-                              type="button"
-                              className="btn btn-danger-soft btn-sm"
-                              onClick={() => handleDeleteCobranza(cob)}
-                              title="Eliminar pago"
+                          <div className="payment-history-meta">
+                            <span
+                              className={`badge ${
+                                cob.metodoPago === 'Efectivo' ? 'badge-emerald' : 'badge-blue'
+                              }`}
                             >
-                              <Trash2 size={13} />
-                            </button>
+                              {cob.metodoPago === 'Efectivo' ? '💵 Efectivo' : '🏦 Transferencia'}
+                            </span>
+                            {cob.actividad && (
+                              <span className="payment-history-pill">{cob.actividad}</span>
+                            )}
+                            {cob.dias && (
+                              <span className="badge badge-slate">{cob.dias}d</span>
+                            )}
+                            {cob.fechaPago && (
+                              <span className="payment-history-date mono">📅 {cob.fechaPago}</span>
+                            )}
                           </div>
+                          {cob.observaciones && (
+                            <div className="payment-history-obs">
+                              <span>💬 {cob.observaciones}</span>
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
